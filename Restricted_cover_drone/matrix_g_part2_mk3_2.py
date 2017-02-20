@@ -4,13 +4,13 @@
 
 
 #B version: using dictionary. Much faster
-import pysal,  shapefile, networkx, time
+import pysal,  shapefile, networkx, time, cPickle
 from shapely.geometry import Point, Polygon, LineString, MultiPoint, MultiPolygon
 from collections import defaultdict
 #import cProfile, pstats, StringIO
 
-class Convexpath():
-    def __init__(self, path, origin, destination, obstacles):
+class convexMatrix():
+    def __init__(self, path, origin, destination, obstacles, indi):
         ori_shp = pysal.IOHandlers.pyShpIO.shp_file(path + origin)
         des_shp = pysal.IOHandlers.pyShpIO.shp_file(path + destination)
         obs_shp = pysal.IOHandlers.pyShpIO.shp_file(path + obstacles)
@@ -20,21 +20,39 @@ class Convexpath():
         self.path = path
         self.version_name = "_Convexpath_Sequential_"
         pair_number = 0
-        
-
+        self.indi = indi
         ODPairs = []
-        for i in self.originPoints:
-            for j in self.destinationPoints:
-                ODPairs.append([(i,j), pair_number])
-                pair_number += 1
-        f = open(path + "Results" + self.version_name + origin + "_" + destination +"_"+obstacles+".txt", "w")
-        for pair in ODPairs:
-            t_start = time.time()
-            result = self.createConvexPath(pair)
-            t_end = time.time()
-            print str(t_end - t_start)
-            f.write(result + " " + str(t_end - t_start) + "\n" )
-        f.close()
+        results_d = defaultdict(list)
+        
+        
+        FID_i = 0
+        
+        if indi == "FF":
+            for i in self.originPoints:
+                FID_j = 0
+                for j in self.originPoints:
+                    if not i == j:                        
+                        result = self.createConvexPath((i,j), str(FID_i) + "_"+ str(FID_j))
+                        if result[0] == 1:
+                            results_d[FID_i].append(result)
+                        FID_j += 1
+                FID_i += 1
+            f = open(path + "FF_Dict" + origin + "_" + destination +"_"+obstacles+".txt", "w")
+            cPickle.dump(results_d, f)
+            f.close()
+        
+        elif indi == "FD":
+            for i in self.originPoints:
+                FID_j = 0
+                for j in self.destinationPoints:
+                    result = self.createConvexPath((i,j), str(FID_i) + "_"+ str(FID_j))
+                    if result[0] == 1:
+                        results_d[FID_i].append(result)
+                    FID_j += 1
+                FID_i += 1
+            f = open(path + "FD_Dict" + origin + "_" + destination +"_"+obstacles+".txt", "w")
+            cPickle.dump(results_d, f)
+            f.close()
         
     def generateGeometry(self, in_shp):
         resultingGeometry = []
@@ -130,13 +148,23 @@ class Convexpath():
         
         
                             
-    def createConvexPath(self, pair):
+    def createConvexPath(self, pair, FID_ij):
         #pr = cProfile.Profile()
         #pr2 = cProfile.Profile()
         
-        print pair[1]
-        odPointsList = ((pair[0][0].x, pair[0][0].y), (pair[0][1].x, pair[0][1].y))
-        #st_line = LineString(odPointsList)
+        fd_fullPayload = 5 * 5280
+        fd_empty = 10 * 5280
+        fd_delivery = 3.33 * 5280   
+        
+        print pair
+        odPointsList = ((pair[0].x, pair[0].y), (pair[1].x, pair[1].y))
+        st_line = LineString(odPointsList)
+        if self.indi == "FF":
+            if st_line.length > fd_fullPayload:
+                return 0, 0, None
+        elif self.indi == "FD":
+            if st_line.length > fd_delivery:
+                return 0, 0, None 
         labeledObstaclePoly = []
         totalConvexPathList = {}
         
@@ -157,32 +185,15 @@ class Convexpath():
         while terminate == 0:
             t1s = time.time()
             idx_loop1 += 1
-            
+           
             t6s = time.time()
-            w = shapefile.Writer(shapefile.POLYLINE)
-            w.field('nem')
-            for line in totalConvexPathList:
-                w.line(parts=[[ list(x) for x in line ]])
-                w.record('ff')
-            w.save(self.path + "graph_" + str(idx_loop1) + self.version_name)
+
 
             totalGrpah = self.createGraph(totalConvexPathList.keys())
             spatial_filter_n = networkx.dijkstra_path(totalGrpah, odPointsList[0], odPointsList[1])            
             spatial_filter = []
             for i in xrange(len(spatial_filter_n)-1):
                 spatial_filter.append([spatial_filter_n[i], spatial_filter_n[i+1]])
-
-            w = shapefile.Writer(shapefile.POLYLINE)
-            w.field('nem')
-            for line in spatial_filter:
-                w.line(parts=[[ list(x) for x in line ]])
-                w.record('ff')
-            w.save(self.path + "spatial Filter_" + str(idx_loop1) + self.version_name)
-            
-            #sp_length = 0
-            #for j in spatial_filter:
-                #sp_length += LineString(j).length        
-            #sp_l_set.append(sp_length)
             
             crossingDict = defaultdict(list)
             
@@ -199,6 +210,7 @@ class Convexpath():
             time_spatialFiltering += t6e - t6s 
             
             if len(crossingDict.keys()) == 0:
+                print "done"
                 terminate = 1
                 continue
             else:
@@ -318,12 +330,12 @@ class Convexpath():
                                     #if [line[1], line[0]] not in totalConvexPathList:
                                         #totalConvexPathList.append(line)
 
-                w = shapefile.Writer(shapefile.POLYLINE)
-                w.field('nem')
-                for line in totalConvexPathList:
-                    w.line(parts=[[ list(x) for x in line ]])
-                    w.record('ff')
-                w.save(self.path + "graph2_" + str(idx_loop1) + self.version_name) 
+                #w = shapefile.Writer(shapefile.POLYLINE)
+                #w.field('nem')
+                #for line in totalConvexPathList:
+                    #w.line(parts=[[ list(x) for x in line ]])
+                    #w.record('ff')
+                #w.save(self.path + "graph2_" + str(idx_loop1) + self.version_name) 
                 t7e = time.time()
                 time_loop1_crossingDict += t7e - t7s
                 #new lines            
@@ -348,16 +360,10 @@ class Convexpath():
                 terminate2 = 0
                 idx_loop2 = 0
                 t1e = time.time()
-                time_loop1 += t1e - t1s    
-                #w = shapefile.Writer(shapefile.POLYGON)
-                #w.field('net')
-                #for obs in labeledObstaclePoly:
-                    #w.poly(parts=[[list(x) for x in list(obs.exterior.coords)]])
-                    #w.record('ff')
-                #w.save(self.path + "obs"+ str(idx_loop1) + "_" + self.version_name)                  
+                time_loop1 += t1e - t1s                   
                 while terminate2 == 0:
                     idx_loop2 += 1
-
+                   
                     deleteList = []
                     crossingDict = defaultdict(list)
 
@@ -512,12 +518,12 @@ class Convexpath():
                         t4e = time.time()
                         time_convexLoop += t4e - t4s
                         #end of else
-                    w = shapefile.Writer(shapefile.POLYLINE)
-                    w.field('nem')
-                    for line in impededPathList:
-                        w.line(parts=[[ list(x) for x in line ]])
-                        w.record('ff')
-                    w.save(self.path + "After_graph_" + str(idx_loop1) + "_"+ str(idx_loop2) +"_"+ self.version_name)
+                    #w = shapefile.Writer(shapefile.POLYLINE)
+                    #w.field('nem')
+                    #for line in impededPathList:
+                        #w.line(parts=[[ list(x) for x in line ]])
+                        #w.record('ff')
+                    #w.save(self.path + "After_graph_" + str(idx_loop1) + "_"+ str(idx_loop2) +"_"+ self.version_name)
                     #end of while2
                 for line in impededPathList:
                     if not totalConvexPathList.has_key(line):
@@ -530,50 +536,46 @@ class Convexpath():
         for i in range(len(esp_n)-1):
             esp.append([esp_n[i], esp_n[i+1]])
         w = shapefile.Writer(shapefile.POLYLINE)
-        w.field('nem')
-        no_edges = 0
-        for line in totalConvexPathList.keys():
-            no_edges += 1
-            w.line(parts=[[ list(x) for x in line ]])
-            w.record('ff')
-        w.save(self.path + "totalpath" + self.version_name + "%d" % pair[1] )              
-        w = shapefile.Writer(shapefile.POLYLINE)
-        w.field('nem')
-        for line in esp:
-            w.line(parts=[[ list(x) for x in line ]])
-            w.record('ff')
-        w.save(self.path + "ESP_" + self.version_name + "%d" % pair[1])
-        #sp_len_str = str(sp_l_set)[1:-1]
+        #w.field('nem')
+        #no_edges = 0
+        #for line in totalConvexPathList.keys():
+            #no_edges += 1
+            #w.line(parts=[[ list(x) for x in line ]])
+            #w.record('ff')
+        #w.save(self.path + "totalpath_" + "%s" % FID_ij )              
+        #w = shapefile.Writer(shapefile.POLYLINE)
+        if self.indi == "FF":
+            w.field('nem')
+            for line in esp:
+                w.line(parts=[[ list(x) for x in line ]])
+                w.record('ff')
+            w.save(self.path + "ESP_" + "%s" % FID_ij)
+        #targetPysal = pysal.IOHandlers.pyShpIO.shp_file(self.path + "ESP_" + "%s" % FID_ij)
+        #targetShp = self.generateGeometry(targetPysal)
+        total_length = 0
+        for coords in esp:
+            line = LineString(coords)
+            total_length += line.length 
         
-        #s = StringIO.StringIO()
-        #sortby = 'cumulative'
-        #ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-        #ps.print_stats()
-        #print s.getvalue()
-#        
-#        s = StringIO.StringIO()
-#        sortby = 'cumulative'
-#        ps = pstats.Stats(pr2, stream=s).sort_stats(sortby)
-#        ps.print_stats()
-#        print s.getvalue()
-        
-        print "loop1: ", time_loop1
-        print "Spatial Filtering: ", time_spatialFiltering
-        print "loop1 crossingDict: ", time_loop1_crossingDict
-        print "crossingDict: ", time_crossingDict
-        print 'convexLoop: ', time_convexLoop
-        print "time_contain: ", time_contain2
-        print "impedingArcs: ", time_impedingArcs
-        print "convexHUll: ", time_buildConvexHulls
-        return 'convexpath %d %d %d %f %f %f' % (pair[1], no_edges, len(labeledObstaclePoly), time_convexLoop, time_crossingDict, time_buildConvexHulls)
-        
-path_imac = "/Users/insuhong/Downloads/grid2/"
+        if self.indi == "FF":
+            if total_length <= fd_fullPayload:
+               
+                return 1, total_length, self.path + "ESP_" + FID_ij + ".shp"
+            else:
+                return 0, 0, None
+        elif self.indi == 'FD':
+            if total_length <= fd_delivery:
+                return 1, total_length, None
+            else:
+                return 0, 0, None         
+
+path_imac = "/Users/insuhong/Dropbox/research/Convexpath Approach/HPC/data/"
 path_home = "F:\\data\\grid\\"
-path_air = "/Users/insuhong/Dropbox/research/Convexpath Approach/testField/data/"
-path_ubuntu = "/home/insu/Dropbox/research/Convexpath Approach/Convexpath_HiDensity/data/"
+path_air = "/Users/insuhong/Dropbox/research/Distance restricted covering model/Locating recharging station/data3/"
+path_ubuntu = "/home/insu/Dropbox/research/Convexpath Approach/HPC/data/"
 
 start = time.time()
-a = Convexpath(path_imac, "new_origin.shp", "new_destination.shp", "new_obs.shp")
-
+#a = convexMatrix(path_air, "sample_sites_2.shp", "sample_demand_2_p.shp", "obstacles_p.shp", "FF")
+b = convexMatrix(path_air, "sample_sites_2.shp", "sample_demand_2_p.shp", "obstacles_p.shp", "FD")
 stop = time.time()
 print stop - start
